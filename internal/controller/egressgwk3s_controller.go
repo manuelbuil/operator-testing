@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	// 3rd party and SIG contexts
@@ -127,6 +128,17 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return reconcile.Result{}, nil
 	}
 
+	myNodeList := &corev1.NodeList{}
+	err = r.List(context.TODO(), myNodeList)
+
+	if err != nil {
+		logger.Info("Error. Shit")
+		return reconcile.Result{}, err
+	}
+
+	logger.Info("NO ERROR! HURRAY!!")
+	fmt.Printf("These are the nodes: %#v \n", myNodeList)
+
 	// Update the At instance, setting the status to the respective phase:
 	err = r.Status().Update(context.TODO(), instance)
 	if err != nil {
@@ -140,6 +152,9 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 func (r *Egressgwk3sReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mbuilesv1alpha1.Egressgwk3s{}).
+		Owns(&mbuilesv1alpha1.Egressgwk3s{}).
+		Owns(&corev1.Pod{}).
+		Owns(&corev1.Node{}).
 		Complete(r)
 }
 
