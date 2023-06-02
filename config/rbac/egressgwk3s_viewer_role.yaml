@@ -1,0 +1,27 @@
+# permissions for end users to view egressgwk3s.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: egressgwk3s-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: operator-testing
+    app.kubernetes.io/part-of: operator-testing
+    app.kubernetes.io/managed-by: kustomize
+  name: egressgwk3s-viewer-role
+rules:
+- apiGroups:
+  - mbuil.es
+  resources:
+  - egressgwk3s
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - mbuil.es
+  resources:
+  - egressgwk3s/status
+  verbs:
+  - get

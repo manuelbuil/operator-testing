@@ -1,0 +1,8 @@
+apiVersion: mbuil.es/v1alpha1
+kind: Egressgwk3s
+metadata:
+  name: first-egressgw
+spec:
+  gwnode: "master-01"
+  sourceIP: "10.42.0.11"
+

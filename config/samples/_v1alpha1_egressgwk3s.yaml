@@ -1,0 +1,12 @@
+apiVersion: mbuil.es/v1alpha1
+kind: Egressgwk3s
+metadata:
+  labels:
+    app.kubernetes.io/name: egressgwk3s
+    app.kubernetes.io/instance: egressgwk3s-sample
+    app.kubernetes.io/part-of: operator-testing
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: operator-testing
+  name: egressgwk3s-sample
+spec:
+  # TODO(user): Add fields here

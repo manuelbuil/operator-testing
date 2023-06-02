@@ -1,0 +1,31 @@
+# permissions for end users to edit egressgwk3s.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: egressgwk3s-editor-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: operator-testing
+    app.kubernetes.io/part-of: operator-testing
+    app.kubernetes.io/managed-by: kustomize
+  name: egressgwk3s-editor-role
+rules:
+- apiGroups:
+  - mbuil.es
+  resources:
+  - egressgwk3s
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - mbuil.es
+  resources:
+  - egressgwk3s/status
+  verbs:
+  - get
