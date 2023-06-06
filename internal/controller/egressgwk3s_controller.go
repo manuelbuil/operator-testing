@@ -18,20 +18,19 @@ package controller
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	// 3rd party and SIG contexts
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	mbuilesv1alpha1 "github.com/manuelbuil/operator-testing/api/v1alpha1"
 )
@@ -63,7 +62,7 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	logger := r.Log.WithValues("namespace", req.NamespacedName, "egressGw", req.Name)
 	logger.Info("== Reconciling EgressGW")
 
-	// Fetch the At instance
+	// Fetch the egressgwk3s instance
 	instance := &mbuilesv1alpha1.Egressgwk3s{}
 	err := r.Get(context.TODO(), req.NamespacedName, instance)
 	if err != nil {
@@ -75,61 +74,46 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return reconcile.Result{}, err
 	}
 
-	// If no phase set, default to pending (the initial phase):
-	if instance.Status.Phase == "" {
-		instance.Status.Phase = mbuilesv1alpha1.PhasePending
-	}
-
-	// Make the main case distinction: implementing
-	// the state diagram PENDING -> RUNNING -> DONE
-	switch instance.Status.Phase {
-	case mbuilesv1alpha1.PhasePending:
-		logger.Info("Phase: PENDING")
-
-		instance.Status.Phase = mbuilesv1alpha1.PhaseRunning
-
-	case mbuilesv1alpha1.PhaseRunning:
-		logger.Info("Phase: RUNNING")
-		logger.Info("About to execute: echo " + instance.Spec.GwNode + " " + instance.Spec.SourceIP)
-		pod := newPodForCR(instance)
-		// Set At instance as the owner and controller
-		if err := controllerutil.SetControllerReference(instance, pod, r.Scheme); err != nil {
-			// requeue with error
-			return reconcile.Result{}, err
+	var podIPs []string
+	for _, sourcePod := range instance.Spec.SourcePods {
+		// Fetch pods based on the namespace selector
+		namespaceSelector := sourcePod.NamespaceSelector
+		namespaceList := &corev1.NamespaceList{}
+		err = r.Client.List(ctx, namespaceList, client.MatchingLabels(namespaceSelector.MatchLabels))
+		if err != nil {
+			return ctrl.Result{}, err
 		}
-		found := &corev1.Pod{}
-		err = r.Get(context.TODO(), types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}, found)
-		// Try to see if the Pod already exists and if not
-		// (which we expect) then create a one-shot Pod as per spec:
-		if err != nil && errors.IsNotFound(err) {
-			err = r.Create(context.TODO(), pod)
+
+		// Fetch pods based on the pod selector
+		podSelector := sourcePod.PodSelector
+		podList := &corev1.PodList{}
+		err = r.Client.List(ctx, podList, client.InNamespace(req.Namespace), client.MatchingLabels(podSelector.MatchLabels))
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		// Collect the IP addresses of pods that match either the namespace selector or the pod selector
+		for _, pod := range podList.Items {
+			podIPs = append(podIPs, pod.Status.PodIP)
+		}
+		for _, namespace := range namespaceList.Items {
+			podsInNamespace := &corev1.PodList{}
+			err := r.Client.List(ctx, podsInNamespace, client.InNamespace(namespace.Name), client.MatchingLabels(podSelector.MatchLabels))
 			if err != nil {
-				// requeue with error
-				return reconcile.Result{}, err
+				return ctrl.Result{}, err
 			}
-			logger.Info("Pod launched", "name", pod.Name)
-		} else if err != nil {
-			// requeue with error
-			return reconcile.Result{}, err
-		} else if found.Status.Phase == corev1.PodFailed || found.Status.Phase == corev1.PodSucceeded {
-			logger.Info("Container terminated", "reason", found.Status.Reason, "message", found.Status.Message)
-			instance.Status.Phase = mbuilesv1alpha1.PhaseDone
-		} else {
-			// don't requeue because it will happen automatically when the Pod status changes
-			return reconcile.Result{}, nil
+			for _, pod := range podsInNamespace.Items {
+				podIPs = append(podIPs, pod.Status.PodIP)
+			}
 		}
-
-	case mbuilesv1alpha1.PhaseDone:
-		logger.Info("Phase: DONE")
-		return reconcile.Result{}, nil
-
-	default:
-		logger.Info("NOP")
-		return reconcile.Result{}, nil
 	}
 
-	myNodeList := &corev1.NodeList{}
-	err = r.List(context.TODO(), myNodeList)
+	// Update the custom resource status with the collected IP addresses
+	instance.Status.Pods = podIPs
+	err = r.Client.Status().Update(ctx, instance)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	if err != nil {
 		logger.Info("Error. Shit")
@@ -137,13 +121,6 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	logger.Info("NO ERROR! HURRAY!!")
-	fmt.Printf("These are the nodes: %#v \n", myNodeList)
-
-	// Update the At instance, setting the status to the respective phase:
-	err = r.Status().Update(context.TODO(), instance)
-	if err != nil {
-		return reconcile.Result{}, err
-	}
 
 	return ctrl.Result{}, nil
 }
@@ -155,27 +132,32 @@ func (r *Egressgwk3sReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&mbuilesv1alpha1.Egressgwk3s{}).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Node{}).
-		Complete(r)
+		Watches(
+			&source.Kind{Type: &corev1.Pod{}},
+			&handler.EnqueueRequestForOwner{
+				IsController: true,
+				OwnerType:    &mbuilesv1alpha1.Egressgwk3s{},
+			},
+		).WithEventFilter(predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// Check if the updated pod matches the pod selector label
+			podSelector := e.ObjectNew.GetLabels()
+			return podSelectorMatches(podSelector, podSelector)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			// Check if the deleted pod matches the pod selector label
+			podSelector := e.Object.GetLabels()
+			return podSelectorMatches(podSelector, podSelector)
+		},
+	},
+	).Complete(r)
 }
 
-// newPodForCR returns a busybox Pod with same name/namespace declared in resource
-func newPodForCR(cr *mbuilesv1alpha1.Egressgwk3s) *corev1.Pod {
-	labels := map[string]string{
-		"app": cr.Name,
+func podSelectorMatches(podLabels, selectorLabels map[string]string) bool {
+	for key, value := range selectorLabels {
+		if podLabels[key] != value {
+			return false
+		}
 	}
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cr.Name + "-pod",
-			Namespace: cr.Namespace,
-			Labels:    labels,
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{
-				Name:    "busybox",
-				Image:   "busybox",
-				Command: strings.Split("echo ", cr.Spec.GwNode+" "+cr.Spec.SourceIP),
-			}},
-			RestartPolicy: corev1.RestartPolicyOnFailure,
-		},
-	}
+	return true
 }

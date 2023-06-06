@@ -4,5 +4,7 @@ metadata:
   name: first-egressgw
 spec:
   gwnode: "master-01"
-  sourceIP: "10.42.0.11"
-
+  sourcepods:
+  - podselector:
+      matchLabels:
+        app: multitool

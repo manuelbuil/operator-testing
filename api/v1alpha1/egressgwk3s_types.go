@@ -20,24 +20,29 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const (
-	PhasePending = "PENDING"
-	PhaseRunning = "RUNNING"
-	PhaseDone    = "DONE"
-)
-
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // Egressgwk3sSpec defines the desired state of Egressgwk3s
 type Egressgwk3sSpec struct {
-	GwNode   string `json:"gwnode,omitempty"`
-	SourceIP string `json:"sourceIP,omitempty"`
+	GwNode     string               `json:"gwnode,omitempty"`
+	SourcePods []SourcePodsSelector `json:"sourcepods,omitempty"`
+}
+
+type SourcePodsSelector struct {
+	NamespaceSelector metav1.LabelSelector `json:"namespaceselector,omitempty"`
+	PodSelector       metav1.LabelSelector `json:"podselector,omitempty"`
+	IpBlock           *IPBlock             `json:"ipblock,omitempty"`
+}
+
+type IPBlock struct {
+	CIDR   string   `json:"cidr,omitempty"`
+	Except []string `json:"except,omitempty"`
 }
 
 // Egressgwk3sStatus defines the observed state of Egressgwk3s
 type Egressgwk3sStatus struct {
-	Phase string `json:"phase,omitempty"`
+	Pods []string `json:"pods,omitempty"`
 }
 
 // +kubebuilder:object:root=true
