@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	// 3rd party and SIG contexts
 
@@ -26,9 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
@@ -61,64 +60,105 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	logrus.Info("== Reconciling EgressGW")
 
-	// Fetch the egressgwk3s instance
-	instance := &mbuilesv1alpha1.Egressgwk3s{}
-	err := r.Get(context.TODO(), req.NamespacedName, instance)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Request object not found, could have been deleted after reconcile request - return and don't requeue:
-			return reconcile.Result{}, nil
+	logrus.Infof("This is req.Name: %v", req.Name)
+	logrus.Infof("This is req.Namespace: %v", req.Namespace)
+	logrus.Infof("This is req.String: %v", req.String())
+	logrus.Infof("This is req.NamespacedName: %v", req.NamespacedName)
+
+	isAPod := false
+	isACRD := false
+
+	podInstance := &corev1.Pod{}
+	errPod := r.Get(ctx, req.NamespacedName, podInstance)
+	if errPod != nil {
+		if errors.IsNotFound(errPod) {
+			logrus.Infof("This is not a pod!")
+		} else {
+			return reconcile.Result{}, errPod
 		}
-		// Error reading the object - requeue the request:
-		return reconcile.Result{}, err
+	} else {
+		isAPod = true
+		logrus.Info("It is a CRD")
 	}
 
-	var podIPs []string
-	for _, sourcePod := range instance.Spec.SourcePods {
-		// Fetch pods based on the namespace selector
-		namespaceSelector := sourcePod.NamespaceSelector
-		namespaceList := &corev1.NamespaceList{}
-		err = r.Client.List(ctx, namespaceList, client.MatchingLabels(namespaceSelector.MatchLabels))
-		if err != nil {
-			return ctrl.Result{}, err
+	// Fetch the egressgwk3s instance
+	instance := &mbuilesv1alpha1.Egressgwk3s{}
+	err := r.Get(ctx, req.NamespacedName, instance)
+	logrus.Infof("This is err: %v", err)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logrus.Info("This is not a crd!")
+		} else {
+			// Error reading the object - requeue the request:
+			return reconcile.Result{}, err
 		}
+	} else {
+		isACRD = true
+		logrus.Info("It is a pod")
+	}
 
-		// Fetch pods based on the pod selector
-		podSelector := sourcePod.PodSelector
-		podList := &corev1.PodList{}
-		err = r.Client.List(ctx, podList, client.InNamespace(req.Namespace), client.MatchingLabels(podSelector.MatchLabels))
-		if err != nil {
-			return ctrl.Result{}, err
-		}
+	if !isAPod && !isACRD {
+		return reconcile.Result{}, fmt.Errorf("This is not a pod or a CRD")
+	}
 
-		// Collect the IP addresses of pods that match either the namespace selector or the pod selector
-		for _, pod := range podList.Items {
-			logrus.Infof("One pod found on the podList: %v", pod.Status.PodIP)
-			podIPs = append(podIPs, pod.Status.PodIP)
-		}
-		for _, namespace := range namespaceList.Items {
-			podsInNamespace := &corev1.PodList{}
-			err := r.Client.List(ctx, podsInNamespace, client.InNamespace(namespace.Name), client.MatchingLabels(podSelector.MatchLabels))
+	if isACRD {
+		var podIPs []string
+		logrus.Infof("This is sourcepods: %v", instance.Spec.SourcePods)
+		for _, sourcePod := range instance.Spec.SourcePods {
+			// Fetch pods based on the namespace selector
+			namespaceSelector := sourcePod.NamespaceSelector
+			namespaceList := &corev1.NamespaceList{}
+			if len(namespaceSelector.MatchLabels) > 0 {
+				err = r.Client.List(ctx, namespaceList, client.MatchingLabels(namespaceSelector.MatchLabels))
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			// Fetch pods based on the pod selector
+			podSelector := sourcePod.PodSelector
+			podList := &corev1.PodList{}
+			if len(podSelector.MatchLabels) > 0 {
+				err = r.Client.List(ctx, podList, client.InNamespace(req.Namespace), client.MatchingLabels(podSelector.MatchLabels))
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+
+			logrus.Infof("This is namespaceList: %v and this is podList: %v", namespaceList, podList)
+
+			// Collect the IP addresses of pods that match either the namespace selector or the pod selector
+			for _, pod := range podList.Items {
+				logrus.Infof("One pod found on the podList: %v", pod.Status.PodIP)
+				podIPs = append(podIPs, pod.Status.PodIP)
+			}
+			for _, namespace := range namespaceList.Items {
+				podsInNamespace := &corev1.PodList{}
+				err := r.Client.List(ctx, podsInNamespace, client.InNamespace(namespace.Name), client.MatchingLabels(podSelector.MatchLabels))
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+				for _, pod := range podsInNamespace.Items {
+					logrus.Infof("One pod found on the namespaceList: %v", pod.Status.PodIP)
+					podIPs = append(podIPs, pod.Status.PodIP)
+				}
+			}
+
+			// Update the custom resource status with the collected IP addresses
+			instance.Status.Pods = podIPs
+			err = r.Client.Status().Update(ctx, instance)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			for _, pod := range podsInNamespace.Items {
-				logrus.Infof("One pod found on the namespaceList: %v", pod.Status.PodIP)
-				podIPs = append(podIPs, pod.Status.PodIP)
-			}
 		}
 	}
 
-	// Update the custom resource status with the collected IP addresses
-	instance.Status.Pods = podIPs
-	err = r.Client.Status().Update(ctx, instance)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if err != nil {
-		logrus.Info("Error. Shit")
-		return reconcile.Result{}, err
+	if isAPod {
+		// Grab all the existing egressGW and create a new request to reconcile for each of them
+		egressGwList := &mbuilesv1alpha1.Egressgwk3sList{}
+		_ = r.List(ctx, egressGwList)
+		for _, egressgw := range egressGwList.Items {
+			logrus.Infof("This is egressgw: %v", egressgw)
+		}
 	}
 
 	logrus.Info("NO ERROR! HURRAY!!")
@@ -130,35 +170,14 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 func (r *Egressgwk3sReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mbuilesv1alpha1.Egressgwk3s{}).
-		Owns(&mbuilesv1alpha1.Egressgwk3s{}).
-		Owns(&corev1.Pod{}).
-		Owns(&corev1.Node{}).
 		Watches(
 			&source.Kind{Type: &corev1.Pod{}},
-			&handler.EnqueueRequestForOwner{
-				IsController: true,
-				OwnerType:    &mbuilesv1alpha1.Egressgwk3s{},
-			},
-		).WithEventFilter(predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			// Check if the updated pod matches the pod selector label
-			podSelector := e.ObjectNew.GetLabels()
-			return podSelectorMatches(podSelector, podSelector)
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			// Check if the deleted pod matches the pod selector label
-			podSelector := e.Object.GetLabels()
-			return podSelectorMatches(podSelector, podSelector)
-		},
-	},
-	).Complete(r)
+			&handler.EnqueueRequestForObject{},
+		).
+		Complete(r)
 }
 
-func podSelectorMatches(podLabels, selectorLabels map[string]string) bool {
-	for key, value := range selectorLabels {
-		if podLabels[key] != value {
-			return false
-		}
-	}
+func (r *Egressgwk3sReconciler) podSelectorMatches(configMap client.Object) bool {
+	//
 	return true
 }
