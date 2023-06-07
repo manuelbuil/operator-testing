@@ -20,7 +20,7 @@ import (
 	"context"
 
 	// 3rd party and SIG contexts
-	"github.com/go-logr/logr"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,13 +33,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	mbuilesv1alpha1 "github.com/manuelbuil/operator-testing/api/v1alpha1"
+	"github.com/sirupsen/logrus"
 )
 
 // Egressgwk3sReconciler reconciles a Egressgwk3s object
 type Egressgwk3sReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	Log    logr.Logger
 }
 
 //+kubebuilder:rbac:groups=mbuil.es,resources=egressgwk3s,verbs=get;list;watch;create;update;patch;delete
@@ -59,8 +59,7 @@ type Egressgwk3sReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.4/pkg/reconcile
 func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 
-	logger := r.Log.WithValues("namespace", req.NamespacedName, "egressGw", req.Name)
-	logger.Info("== Reconciling EgressGW")
+	logrus.Info("== Reconciling EgressGW")
 
 	// Fetch the egressgwk3s instance
 	instance := &mbuilesv1alpha1.Egressgwk3s{}
@@ -94,6 +93,7 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 		// Collect the IP addresses of pods that match either the namespace selector or the pod selector
 		for _, pod := range podList.Items {
+			logrus.Infof("One pod found on the podList: %v", pod.Status.PodIP)
 			podIPs = append(podIPs, pod.Status.PodIP)
 		}
 		for _, namespace := range namespaceList.Items {
@@ -103,6 +103,7 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				return ctrl.Result{}, err
 			}
 			for _, pod := range podsInNamespace.Items {
+				logrus.Infof("One pod found on the namespaceList: %v", pod.Status.PodIP)
 				podIPs = append(podIPs, pod.Status.PodIP)
 			}
 		}
@@ -116,11 +117,11 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	if err != nil {
-		logger.Info("Error. Shit")
+		logrus.Info("Error. Shit")
 		return reconcile.Result{}, err
 	}
 
-	logger.Info("NO ERROR! HURRAY!!")
+	logrus.Info("NO ERROR! HURRAY!!")
 
 	return ctrl.Result{}, nil
 }
