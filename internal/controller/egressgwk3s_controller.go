@@ -66,6 +66,7 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	isAPod := false
 	isACRD := false
+	isANode := false
 
 	//TODO investigate r.event
 	podInstance := &corev1.Pod{}
@@ -79,6 +80,20 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	} else {
 		isAPod = true
 		logrus.Info("It is a POD")
+	}
+
+	//TODO investigate r.event
+	nodeInstance := &corev1.Node{}
+	errNode := r.Get(ctx, req.NamespacedName, nodeInstance)
+	if errNode != nil {
+		if errors.IsNotFound(errNode) {
+			logrus.Infof("This is not a node!")
+		} else {
+			return reconcile.Result{}, errNode
+		}
+	} else {
+		isANode = true
+		logrus.Info("It is a Node")
 	}
 
 	// Fetch the egressgwk3s instance
@@ -97,8 +112,8 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		logrus.Info("It is a CRD")
 	}
 
-	if !isAPod && !isACRD {
-		logrus.Info("This is not a pod or a CRD. Probably something got removed")
+	if !isAPod && !isACRD && !isANode {
+		logrus.Info("This is not a pod or a CRD or a node. Probably something got removed")
 	}
 
 	if isACRD {
@@ -110,8 +125,13 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
-	// If it is a pod or something got removed, run all egresscrds again
-	if isAPod || (!isAPod && !isACRD) {
+	if isANode {
+		nodeInstance.GetLabels()
+		logrus.Info("This is a node")
+	}
+
+	// If it is a pod or something (node, pod, crd) got removed, run all egresscrds again
+	if isAPod || (!isAPod && !isACRD && !isANode) {
 		// Grab all the existing egressGW and create a new request to reconcile for each of them
 		egressGwList := &mbuilesv1alpha1.Egressgwk3sList{}
 		_ = r.List(ctx, egressGwList)
@@ -144,8 +164,18 @@ func processEgressGW(ctx context.Context, egressgw mbuilesv1alpha1.Egressgwk3s, 
 		finalPodIPs = append(finalPodIPs, podIPs...)
 	}
 
+	nodeGw := egressgw.Spec.GwNode
+	node := &corev1.Node{}
+	if nodeGw != "" {
+		err = k8sClient.Get(ctx, client.ObjectKey{Name: nodeGw}, node)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Update the custom resource status with the collected IP addresses
 	egressgw.Status.Pods = finalPodIPs
+	egressgw.Status.NodeIP = node.Status.Addresses
 	err = k8sClient.Status().Update(ctx, &egressgw)
 	if err != nil {
 		return err
@@ -156,6 +186,7 @@ func processEgressGW(ctx context.Context, egressgw mbuilesv1alpha1.Egressgwk3s, 
 
 func processSourcePod(ctx context.Context, sourcePod mbuilesv1alpha1.SourcePodsSelector, req ctrl.Request, k8sClient client.Client) ([]string, error) {
 	var podIPs []string
+
 	// Fetch pods based on the namespace selector
 	namespaceSelector := sourcePod.NamespaceSelector
 	namespaceList := &corev1.NamespaceList{}
@@ -204,6 +235,10 @@ func (r *Egressgwk3sReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&mbuilesv1alpha1.Egressgwk3s{}).
 		Watches(
 			&source.Kind{Type: &corev1.Pod{}},
+			&handler.EnqueueRequestForObject{},
+		).
+		Watches(
+			&source.Kind{Type: &corev1.Node{}},
 			&handler.EnqueueRequestForObject{},
 		).
 		Complete(r)

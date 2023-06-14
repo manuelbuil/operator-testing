@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -42,7 +43,8 @@ type IPBlock struct {
 
 // Egressgwk3sStatus defines the observed state of Egressgwk3s
 type Egressgwk3sStatus struct {
-	Pods []string `json:"pods,omitempty"`
+	Pods   []string             `json:"pods,omitempty"`
+	NodeIP []corev1.NodeAddress `json:"nodeIP,omitempty"`
 }
 
 // +kubebuilder:object:root=true
