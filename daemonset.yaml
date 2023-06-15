@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: egressgw
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: egressgw-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["list", "get", "watch"]
+  - apiGroups: ["mbuil.es"]
+    resources: ["egressgwk3s"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: egress-role-binding
+subjects:
+  - kind: ServiceAccount
+    name: egressgw
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: egressgw-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: egress-gw-ds
+  namespace: kube-system
+  labels:
+    k8s-app: egressGwDs
+spec:
+  selector:
+    matchLabels:
+      name: egressGw
+  template:
+    metadata:
+      labels:
+        name: egressGw
+    spec:
+      serviceAccountName: egressgw
+      containers:
+      - name: egress-gw
+        image: mbuilsuse/controller:testing1-20230615
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+

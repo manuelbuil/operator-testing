@@ -114,17 +114,22 @@ func amIGw(ctx context.Context, nodeName string, k8sClient client.Client) (bool,
 	podName := os.Getenv("HOSTNAME")
 	logrus.Infof("MANU - This is podName: %s", podName)
 
+	podList := &corev1.PodList{}
+	listOptions := &client.ListOptions{Namespace: ""}
 
-	pod := &corev1.Pod{}
-	err := k8sClient.Get(ctx, client.ObjectKey{Name: podName}, pod)
+	err := k8sClient.List(ctx, podList, listOptions)
 	if err != nil {
 		return false, err
 	}
 
-	logrus.Infof("MANU - This is nodeName: %s and this is pod.Spec.NodeName: %s", nodeName, pod.Spec.NodeName)
-
-	if nodeName == pod.Spec.NodeName {
-		return true, nil
+	// We need to list over all pods. Using Get will not work as we don't necessarily know the namespace
+	for _, pod := range podList.Items {
+		if pod.Name == podName {
+			logrus.Infof("Pod found. This is its node-name: %s", pod.Spec.NodeName)
+			if nodeName == pod.Spec.NodeName {
+				return true, nil
+			}
+		}
 	}
 
 	return false, nil
