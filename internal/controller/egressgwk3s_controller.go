@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"os"
 
 	// 3rd party and SIG contexts
 
@@ -38,6 +39,15 @@ import (
 type Egressgwk3sReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+}
+
+type myObect struct {
+	isPod  bool
+	isCrd  bool
+	isNode bool
+	myPod  corev1.Pod
+	myNode corev1.Node
+	myCRD  mbuilesv1alpha1.Egressgwk3s
 }
 
 //+kubebuilder:rbac:groups=mbuil.es,resources=egressgwk3s,verbs=get;list;watch;create;update;patch;delete
@@ -64,74 +74,23 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	logrus.Infof("This is req.String: %v", req.String())
 	logrus.Infof("This is req.NamespacedName: %v", req.NamespacedName)
 
-	isAPod := false
-	isACRD := false
-	isANode := false
+	myObject, err := analyzeObject(ctx, req, r.Client)
 
-	//TODO investigate r.event
-	podInstance := &corev1.Pod{}
-	errPod := r.Get(ctx, req.NamespacedName, podInstance)
-	if errPod != nil {
-		if errors.IsNotFound(errPod) {
-			logrus.Infof("This is not a pod!")
-		} else {
-			return reconcile.Result{}, errPod
-		}
-	} else {
-		isAPod = true
-		logrus.Info("It is a POD")
-	}
-
-	//TODO investigate r.event
-	nodeInstance := &corev1.Node{}
-	errNode := r.Get(ctx, req.NamespacedName, nodeInstance)
-	if errNode != nil {
-		if errors.IsNotFound(errNode) {
-			logrus.Infof("This is not a node!")
-		} else {
-			return reconcile.Result{}, errNode
-		}
-	} else {
-		isANode = true
-		logrus.Info("It is a Node")
-	}
-
-	// Fetch the egressgwk3s instance
-	instance := &mbuilesv1alpha1.Egressgwk3s{}
-	err := r.Get(ctx, req.NamespacedName, instance)
-	logrus.Infof("This is err: %v", err)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			logrus.Info("This is not a crd!")
-		} else {
-			// Error reading the object - requeue the request:
-			return reconcile.Result{}, err
-		}
-	} else {
-		isACRD = true
-		logrus.Info("It is a CRD")
-	}
-
-	if !isAPod && !isACRD && !isANode {
+	if !myObject.isCrd && !myObject.isPod && !myObject.isNode {
 		logrus.Info("This is not a pod or a CRD or a node. Probably something got removed")
 	}
 
-	if isACRD {
-		logrus.Infof("This is sourcepods: %v", instance.Spec.SourcePods)
-		err = processEgressGW(ctx, *instance, req, r.Client)
+	if myObject.isCrd {
+		logrus.Infof("This is sourcepods: %v", myObject.myCRD.Spec.SourcePods)
+		err = processEgressGW(ctx, myObject.myCRD, req, r.Client)
 		if err != nil {
 			logrus.Info("Error in isACRD")
 			return reconcile.Result{}, err
 		}
 	}
 
-	if isANode {
-		nodeInstance.GetLabels()
-		logrus.Info("This is a node")
-	}
-
-	// If it is a pod or something (node, pod, crd) got removed, run all egresscrds again
-	if isAPod || (!isAPod && !isACRD && !isANode) {
+	// If it is a pod or something else (node, pod, crd) got removed, run all egresscrds again
+	if myObject.isPod || (!myObject.isPod && !myObject.isCrd && !myObject.isNode) {
 		// Grab all the existing egressGW and create a new request to reconcile for each of them
 		egressGwList := &mbuilesv1alpha1.Egressgwk3sList{}
 		_ = r.List(ctx, egressGwList)
@@ -150,11 +109,34 @@ func (r *Egressgwk3sReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, nil
 }
 
+// amIGw checks if the pod where controller is running is in the node that is gateway
+func amIGw(ctx context.Context, nodeName string, k8sClient client.Client) (bool, error) {
+	podName := os.Getenv("HOSTNAME")
+	logrus.Infof("MANU - This is podName: %s", podName)
+
+
+	pod := &corev1.Pod{}
+	err := k8sClient.Get(ctx, client.ObjectKey{Name: podName}, pod)
+	if err != nil {
+		return false, err
+	}
+
+	logrus.Infof("MANU - This is nodeName: %s and this is pod.Spec.NodeName: %s", nodeName, pod.Spec.NodeName)
+
+	if nodeName == pod.Spec.NodeName {
+		return true, nil
+	}
+
+	return false, nil
+
+}
+
 func processEgressGW(ctx context.Context, egressgw mbuilesv1alpha1.Egressgwk3s, req ctrl.Request, k8sClient client.Client) error {
 	var finalPodIPs []string
 	var podIPs []string
 	var err error
 
+	// loop over all sourcePod rules
 	for _, sourcePod := range egressgw.Spec.SourcePods {
 		podIPs, err = processSourcePod(ctx, sourcePod, req, k8sClient)
 		if err != nil {
@@ -164,12 +146,28 @@ func processEgressGW(ctx context.Context, egressgw mbuilesv1alpha1.Egressgwk3s, 
 		finalPodIPs = append(finalPodIPs, podIPs...)
 	}
 
-	nodeGw := egressgw.Spec.GwNode
+	// If there are no pods, it does not matter that there is a gw
 	node := &corev1.Node{}
-	if nodeGw != "" {
-		err = k8sClient.Get(ctx, client.ObjectKey{Name: nodeGw}, node)
+	if len(finalPodIPs) != 0 {
+		// If there are pods, find the node with the passed name
+		nodeGw := egressgw.Spec.GwNode
+		if nodeGw != "" {
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: nodeGw}, node)
+			if err != nil {
+				logrus.Error("That node does not exist!")
+				return err
+			}
+		}
+		var gw bool
+		gw, err = amIGw(ctx, nodeGw, k8sClient)
 		if err != nil {
+			logrus.Info("Error in amIGw")
 			return err
+		}
+		if gw {
+			logrus.Infof("OMG!!! I AM THE GATEWAY!!!!!")
+		} else {
+			logrus.Info("BUMMER! I AM NOT SPECIAL!")
 		}
 	}
 
@@ -184,6 +182,7 @@ func processEgressGW(ctx context.Context, egressgw mbuilesv1alpha1.Egressgwk3s, 
 	return nil
 }
 
+// processSourcePod processes the labels that can be passed to match pods
 func processSourcePod(ctx context.Context, sourcePod mbuilesv1alpha1.SourcePodsSelector, req ctrl.Request, k8sClient client.Client) ([]string, error) {
 	var podIPs []string
 
@@ -207,8 +206,6 @@ func processSourcePod(ctx context.Context, sourcePod mbuilesv1alpha1.SourcePodsS
 		}
 	}
 
-	logrus.Infof("This is namespaceList: %v and this is podList: %v", namespaceList, podList)
-
 	// Collect the IP addresses of pods that match either the namespace selector or the pod selector
 	for _, pod := range podList.Items {
 		logrus.Infof("One pod found on the podList: %v", pod.Status.PodIP)
@@ -227,6 +224,54 @@ func processSourcePod(ctx context.Context, sourcePod mbuilesv1alpha1.SourcePodsS
 	}
 
 	return podIPs, nil
+}
+
+// analyzeObject returns a MyOject struct
+func analyzeObject(ctx context.Context, req ctrl.Request, k8sClient client.Client) (myObect, error) {
+
+	var object myObect
+
+	//TODO investigate r.event
+	// Check if the update came from a pod
+
+	podInstance := &corev1.Pod{}
+	errPod := k8sClient.Get(ctx, req.NamespacedName, podInstance)
+	if errPod != nil {
+		if !errors.IsNotFound(errPod) {
+			return myObect{}, errPod
+		}
+	} else {
+		object.isPod = true
+		object.myPod = *podInstance
+	}
+
+	//TODO investigate r.event
+	// Check if the update came from a node
+	nodeInstance := &corev1.Node{}
+	errNode := k8sClient.Get(ctx, req.NamespacedName, nodeInstance)
+	if errNode != nil {
+		if !errors.IsNotFound(errNode) {
+			return myObect{}, errNode
+		}
+	} else {
+		object.isNode = true
+		object.myNode = *nodeInstance
+	}
+
+	// Fetch the egressgwk3s instance
+	instance := &mbuilesv1alpha1.Egressgwk3s{}
+	err := k8sClient.Get(ctx, req.NamespacedName, instance)
+	logrus.Infof("This is err: %v", err)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return myObect{}, err
+		}
+	} else {
+		object.isCrd = true
+		object.myCRD = *instance
+	}
+
+	return object, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
