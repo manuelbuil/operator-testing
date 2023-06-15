@@ -26,8 +26,9 @@ import (
 
 // Egressgwk3sSpec defines the desired state of Egressgwk3s
 type Egressgwk3sSpec struct {
-	GwNode     string               `json:"gwnode,omitempty"`
-	SourcePods []SourcePodsSelector `json:"sourcepods,omitempty"`
+	GwNode           string               `json:"gwnode,omitempty"`
+	SourcePods       []SourcePodsSelector `json:"sourcepods,omitempty"`
+	DestinationCIDRs []string             `json:"destinationcidrs,omitempty"`
 }
 
 type SourcePodsSelector struct {
@@ -43,8 +44,9 @@ type IPBlock struct {
 
 // Egressgwk3sStatus defines the observed state of Egressgwk3s
 type Egressgwk3sStatus struct {
-	Pods   []string             `json:"pods,omitempty"`
-	NodeIP []corev1.NodeAddress `json:"nodeIP,omitempty"`
+	Pods             []string             `json:"pods,omitempty"`
+	NodeIP           []corev1.NodeAddress `json:"nodeIP,omitempty"`
+	DestinationCIDRs []string             `json:"destinationcidrs,omitempty"`
 }
 
 // +kubebuilder:object:root=true

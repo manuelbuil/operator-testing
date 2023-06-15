@@ -3,6 +3,8 @@ module github.com/manuelbuil/operator-testing
 go 1.19
 
 require (
+	github.com/coreos/go-iptables v0.6.0
+	github.com/nadoo/ipset v0.5.0
 	github.com/onsi/ginkgo/v2 v2.6.0
 	github.com/onsi/gomega v1.24.1
 	github.com/sirupsen/logrus v1.8.1

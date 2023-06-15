@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	mbuilesv1alpha1 "github.com/manuelbuil/operator-testing/api/v1alpha1"
+	"github.com/manuelbuil/operator-testing/internal/iptables"
 	"github.com/sirupsen/logrus"
 )
 
@@ -139,6 +140,7 @@ func amIGw(ctx context.Context, nodeName string, k8sClient client.Client) (bool,
 func processEgressGW(ctx context.Context, egressgw mbuilesv1alpha1.Egressgwk3s, req ctrl.Request, k8sClient client.Client) error {
 	var finalPodIPs []string
 	var podIPs []string
+	var destinationCIDRs []string
 	var err error
 
 	// loop over all sourcePod rules
@@ -163,6 +165,8 @@ func processEgressGW(ctx context.Context, egressgw mbuilesv1alpha1.Egressgwk3s, 
 				return err
 			}
 		}
+		// And finally the destinationCidrs
+		destinationCIDRs = egressgw.Spec.DestinationCIDRs
 		var gw bool
 		gw, err = amIGw(ctx, nodeGw, k8sClient)
 		if err != nil {
@@ -171,14 +175,23 @@ func processEgressGW(ctx context.Context, egressgw mbuilesv1alpha1.Egressgwk3s, 
 		}
 		if gw {
 			logrus.Infof("OMG!!! I AM THE GATEWAY!!!!!")
+			err = iptables.GatewayActions(finalPodIPs, destinationCIDRs)
+			if err != nil {
+				return err
+			}
 		} else {
 			logrus.Info("BUMMER! I AM NOT SPECIAL!")
+			err = iptables.NonGatewayActions(finalPodIPs, destinationCIDRs)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
 	// Update the custom resource status with the collected IP addresses
 	egressgw.Status.Pods = finalPodIPs
 	egressgw.Status.NodeIP = node.Status.Addresses
+	egressgw.Status.DestinationCIDRs = destinationCIDRs
 	err = k8sClient.Status().Update(ctx, &egressgw)
 	if err != nil {
 		return err

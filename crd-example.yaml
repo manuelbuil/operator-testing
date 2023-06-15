@@ -3,8 +3,10 @@ kind: Egressgwk3s
 metadata:
   name: first-egressgw
 spec:
-  gwnode: "master-01"
+  gwnode: "mbuil-vm0"
   sourcepods:
   - podselector:
       matchLabels:
         app: multitool
+  destinationcidrs:
+  - 1.2.3.4/32

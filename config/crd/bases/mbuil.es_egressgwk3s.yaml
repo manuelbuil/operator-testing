@@ -39,6 +39,10 @@ spec:
           spec:
             description: Egressgwk3sSpec defines the desired state of Egressgwk3s
             properties:
+              destinationcidrs:
+                items:
+                  type: string
+                type: array
               gwnode:
                 type: string
               sourcepods:
@@ -155,6 +159,10 @@ spec:
           status:
             description: Egressgwk3sStatus defines the observed state of Egressgwk3s
             properties:
+              destinationcidrs:
+                items:
+                  type: string
+                type: array
               nodeIP:
                 items:
                   description: NodeAddress contains information for the node's address.
